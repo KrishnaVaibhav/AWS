@@ -15,12 +15,7 @@ Parameters:
         repo:owner@123456/repo@789012
       Legacy format:
         repo:owner/repo
-
-  AllowedBranch:
-    Type: String
-    Default: main
-    Description: Only this branch may assume the role.
-
+        
 Resources:
 
   GitHubOIDCProvider:
