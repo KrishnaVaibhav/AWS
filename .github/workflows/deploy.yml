@@ -1,0 +1,110 @@
+name: Deploy CloudFormation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'stacks/**'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    paths:
+      - 'stacks/**'
+  workflow_dispatch:
+    inputs:
+      arm_nuke:
+        description: 'Arm the nuke (true deletes resources on budget breach)'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
+
+permissions:
+  id-token: write      # required for OIDC
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: budget-nuke
+
+jobs:
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://stacks/budget-nuke.yaml
+
+      - name: Lint
+        run: |
+          pip install cfn-lint
+          cfn-lint stacks/*.yaml
+
+  changeset:
+    # Show what a PR would change, without applying it.
+    if: github.event_name == 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create change set
+        run: |
+          aws cloudformation deploy \
+            --template-file stacks/budget-nuke.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-execute-changeset \
+            --parameter-overrides \
+                BudgetAmount=${{ vars.BUDGET_AMOUNT }} \
+                AlertEmail=${{ secrets.ALERT_EMAIL }} \
+                ArmNuke=false \
+            2>&1 | tee changeset.txt || true
+          cat changeset.txt
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    # Optional: set up a GitHub Environment with required reviewers
+    # so arming the nuke needs an approval click.
+    environment: aws
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy stack
+        run: |
+          aws cloudformation deploy \
+            --template-file stacks/budget-nuke.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+                BudgetAmount=${{ vars.BUDGET_AMOUNT }} \
+                AlertEmail=${{ secrets.ALERT_EMAIL }} \
+                ArmNuke=${{ github.event.inputs.arm_nuke || 'false' }}
+
+      - name: Show outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs' \
+            --output table

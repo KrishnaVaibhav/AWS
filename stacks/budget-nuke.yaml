@@ -1,0 +1,319 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Budget-triggered account cleanup. Alerts at 80%, runs aws-nuke at 100%.
+  Anything tagged keep=true survives. Everything else is deleted.
+
+Parameters:
+  BudgetAmount:
+    Type: Number
+    Default: 10
+    Description: Monthly budget ceiling in USD.
+
+  AlertEmail:
+    Type: String
+    Description: Email address for budget alerts.
+
+  ArmNuke:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Set to true ONLY after you have tested a dry run.
+      While false, the 100% alert emails you but does not delete anything.
+
+Conditions:
+  NukeArmed: !Equals [!Ref ArmNuke, 'true']
+
+Resources:
+
+  # ---------- Notifications ----------
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: budget-alerts
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref AlertTopic
+
+  NukeTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: budget-nuke-trigger
+
+  TopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertTopic
+        - !Ref NukeTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: 'SNS:Publish'
+            Resource:
+              - !Ref AlertTopic
+              - !Ref NukeTopic
+
+  # ---------- Budget ----------
+
+  Budget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: account-ceiling
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref BudgetAmount
+          Unit: USD
+      NotificationsWithSubscribers:
+        # 50% - early warning only
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref AlertTopic
+        # 80% - warning, go tag things you want to keep
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref AlertTopic
+        # 100% forecast - fires before you actually spend it
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref AlertTopic
+        # 100% actual - the nuke
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref AlertTopic
+            - SubscriptionType: SNS
+              Address: !Ref NukeTopic
+
+  # ---------- Trigger Lambda ----------
+
+  TriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: budget-nuke-trigger-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: start-nuke-build
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: codebuild:StartBuild
+                Resource: !GetAtt NukeProject.Arn
+
+  TriggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: budget-nuke-trigger
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TriggerRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          PROJECT_NAME: !Ref NukeProject
+      Code:
+        ZipFile: |
+          import os, boto3
+
+          def handler(event, context):
+              cb = boto3.client('codebuild')
+              r = cb.start_build(projectName=os.environ['PROJECT_NAME'])
+              return {'build': r['build']['id']}
+
+  TriggerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${TriggerFunction}'
+      RetentionInDays: 7
+
+  TriggerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt TriggerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref NukeTopic
+
+  TriggerSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: lambda
+      Endpoint: !GetAtt TriggerFunction.Arn
+      TopicArn: !Ref NukeTopic
+
+  # ---------- Nuke runner ----------
+
+  NukeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: budget-nuke-runner-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      # Needs admin to delete arbitrary resources.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+  NukeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/codebuild/budget-nuke
+      RetentionInDays: 7
+
+  NukeProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: budget-nuke
+      ServiceRole: !GetAtt NukeRole.Arn
+      TimeoutInMinutes: 120
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: NUKE_VERSION
+            Value: '3.29.4'
+          - Name: ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: DRY_RUN
+            Value: !If [NukeArmed, 'false', 'true']
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Ref NukeLogGroup
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              commands:
+                - curl -sSL -o /tmp/nuke.tar.gz
+                  "https://github.com/ekristen/aws-nuke/releases/download/v${NUKE_VERSION}/aws-nuke-v${NUKE_VERSION}-linux-amd64.tar.gz"
+                - tar -xzf /tmp/nuke.tar.gz -C /usr/local/bin aws-nuke
+                - chmod +x /usr/local/bin/aws-nuke
+            pre_build:
+              commands:
+                - |
+                  cat > /tmp/nuke.yaml <<EOF
+                  regions:
+                    - global
+                    - us-east-1
+                    - us-east-2
+                    - us-west-1
+                    - us-west-2
+                    - ca-central-1
+                    - eu-west-1
+                    - eu-west-2
+                    - eu-central-1
+                    - ap-south-1
+                    - ap-southeast-1
+                    - ap-southeast-2
+                    - ap-northeast-1
+                    - sa-east-1
+
+                  blocklist:
+                    - "000000000000"
+
+                  accounts:
+                    "${ACCOUNT_ID}":
+                      filters:
+                        __global__:
+                          - property: "tag:keep"
+                            value: "true"
+                        CloudFormationStack:
+                          - type: glob
+                            value: "budget-nuke*"
+                          - type: glob
+                            value: "github-oidc*"
+                        IAMRole:
+                          - "budget-nuke-runner-role"
+                          - "budget-nuke-trigger-role"
+                          - "github-actions-deploy"
+                        IAMRolePolicyAttachment:
+                          - type: glob
+                            value: "budget-nuke-*"
+                          - type: glob
+                            value: "github-actions-deploy*"
+                        IAMOpenIDConnectProvider:
+                          - type: glob
+                            value: "*token.actions.githubusercontent.com*"
+                        CodeBuildProject:
+                          - "budget-nuke"
+                        LambdaFunction:
+                          - "budget-nuke-trigger"
+                        SNSTopic:
+                          - type: glob
+                            value: "*budget*"
+                        SNSSubscription:
+                          - type: glob
+                            value: "*budget*"
+                  EOF
+                - cat /tmp/nuke.yaml
+            build:
+              commands:
+                - |
+                  if [ "$DRY_RUN" = "true" ]; then
+                    echo "=== DRY RUN - nothing will be deleted ==="
+                    aws-nuke run --config /tmp/nuke.yaml --no-prompt || true
+                  else
+                    echo "=== LIVE RUN - deleting ==="
+                    for i in 1 2 3; do
+                      echo "--- pass $i ---"
+                      aws-nuke run --config /tmp/nuke.yaml \
+                        --no-dry-run --no-prompt --force-sleep 3 || true
+                    done
+                  fi
+
+Outputs:
+  NukeProjectName:
+    Value: !Ref NukeProject
+    Description: Run this manually to test - it starts in dry-run until ArmNuke=true.
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+  Armed:
+    Value: !Ref ArmNuke
