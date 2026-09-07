@@ -51,7 +51,9 @@ Resources:
               StringLike:
                 # Scoped to one repo AND one branch.
                 token.actions.githubusercontent.com:sub:
-                  !Sub '${SubjectClaimPrefix}:ref:refs/heads/${AllowedBranch}'
+                  - !Sub '${SubjectClaimPrefix}:ref:refs/heads/main'
+                  - !Sub '${SubjectClaimPrefix}:ref:refs/heads/dev'
+                  - !Sub '${SubjectClaimPrefix}:ref:refs/heads/feature/*'
       # Admin because the nuke stack creates IAM roles.
       # Narrow this if you later deploy stacks that don't touch IAM.
       ManagedPolicyArns:
