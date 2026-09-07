@@ -33,6 +33,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug claim
+        run: |
+          echo "repository: ${{ github.repository }}"
+          echo "ref:        ${{ github.ref }}"
+          echo "event:      ${{ github.event_name }}"
+          echo "expected sub: repo:${{ github.repository }}:ref:${{ github.ref }}"
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
