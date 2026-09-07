@@ -15,7 +15,7 @@ Parameters:
         repo:owner@123456/repo@789012
       Legacy format:
         repo:owner/repo
-        
+
 Resources:
 
   GitHubOIDCProvider:
@@ -44,11 +44,15 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                # Scoped to one repo AND one branch.
                 token.actions.githubusercontent.com:sub:
+                  # Jobs WITHOUT `environment:` get the ref form.
                   - !Sub '${SubjectClaimPrefix}:ref:refs/heads/main'
                   - !Sub '${SubjectClaimPrefix}:ref:refs/heads/dev'
                   - !Sub '${SubjectClaimPrefix}:ref:refs/heads/feature/*'
+                  # Jobs WITH `environment: aws` get the environment form
+                  # INSTEAD of the ref form. Without this line the deploy
+                  # job cannot assume the role.
+                  - !Sub '${SubjectClaimPrefix}:environment:aws'
       # Admin because the nuke stack creates IAM roles.
       # Narrow this if you later deploy stacks that don't touch IAM.
       ManagedPolicyArns:
@@ -57,7 +61,7 @@ Resources:
 Outputs:
   DeployRoleArn:
     Value: !GetAtt GitHubDeployRole.Arn
-    Description: Put this in the workflow as role-to-assume.
+    Description: Set as the AWS_DEPLOY_ROLE_ARN secret / role-to-assume.
   OIDCProviderArn:
     Value: !Ref GitHubOIDCProvider
-    Description: Put this in the workflow as oidc-provider.
+    Description: Reference only. Not used by the workflow.

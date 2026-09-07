@@ -1,6 +1,6 @@
-# GitHub → AWS deploy pipeline
+# 🚀 GitHub → AWS deploy pipeline
 
-## Repo layout
+## 📁 Repo layout
 
 ```
 your-repo/
@@ -12,7 +12,7 @@ your-repo/
 `github-oidc-bootstrap.yaml` is deployed by hand, not by the pipeline. Keep it
 in the repo for reference but it doesn't live under `stacks/`.
 
-## Step 1 — Bootstrap (manual, once)
+## 1️⃣ Bootstrap (manual, once)
 
 ```bash
 aws cloudformation deploy \
@@ -28,7 +28,7 @@ aws cloudformation deploy \
 
 Copy the `DeployRoleArn` output.
 
-## Step 2 — Repo settings
+## 2️⃣ Repo settings
 
 Settings → Secrets and variables → Actions
 
@@ -43,7 +43,7 @@ Settings → Secrets and variables → Actions
 |---|---|
 | `BUDGET_AMOUNT` | e.g. `10` |
 
-## Step 3 — Environment gate (recommended)
+## 3️⃣ Environment gate (recommended)
 
 Settings → Environments → New environment → `aws`
 
@@ -53,7 +53,7 @@ approval click instead of firing on a push.
 The workflow references `environment: aws`. If you skip this step, delete that
 line or deploys will hang.
 
-## Step 4 — Push
+## 4️⃣ Push
 
 ```bash
 git add . && git commit -m "budget nuke" && git push
@@ -61,28 +61,28 @@ git add . && git commit -m "budget nuke" && git push
 
 Deploys disarmed. Confirm the SNS email that arrives.
 
-## Arming
+## 🔥 Arming
 
 Actions tab → Deploy CloudFormation → Run workflow → `arm_nuke: true`
 
 Deliberately manual. A push to main never arms it — the workflow defaults
 `ArmNuke` to false whenever the run wasn't a manual dispatch.
 
-## What each trigger does
+## ⚙️ What each trigger does
 
 | Trigger | Result |
 |---|---|
-| PR touching `stacks/` | validate + lint + change set preview, no apply |
-| Push to main | deploy, disarmed |
-| Manual dispatch | deploy, armed or not, your choice |
+| Pull request touching `stacks/` | 🔎 validate + lint + change set preview, no apply |
+| Push to main | 🚢 deploy, disarmed |
+| Manual dispatch | 🎛️ deploy, armed or not, your choice |
 
-## Circularity
+## 🔁 Circularity
 
 The nuke would delete the OIDC provider and deploy role, locking GitHub out.
 Both are filtered in `budget-nuke.yaml`. If you rename either one, update the
 `IAMRole` and `IAMOpenIDConnectProvider` filters to match or you'll lose access.
 
-## Notes
+## 📝 Notes
 
 - Region is pinned to `us-east-1` in the workflow. Budgets only lives there.
 - The deploy role is scoped to one repo and one branch. A fork or another
