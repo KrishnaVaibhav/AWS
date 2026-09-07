@@ -45,11 +45,24 @@ Resources:
     Properties:
       DisplayName: budget-nuke-trigger
 
-  TopicPolicy:
+  AlertTopicPolicy:
     Type: AWS::SNS::TopicPolicy
     Properties:
       Topics:
         - !Ref AlertTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: 'SNS:Publish'
+            Resource: !Ref AlertTopic
+
+  NukeTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
         - !Ref NukeTopic
       PolicyDocument:
         Version: '2012-10-17'
@@ -58,9 +71,16 @@ Resources:
             Principal:
               Service: budgets.amazonaws.com
             Action: 'SNS:Publish'
-            Resource:
-              - !Ref AlertTopic
-              - !Ref NukeTopic
+            Resource: !Ref NukeTopic
+
+  # Email on the nuke topic too, since the 100% notification can only
+  # carry one SNS subscriber and that slot goes to NukeTopic.
+  NukeAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref NukeTopic
 
   # ---------- Budget ----------
 
@@ -102,15 +122,15 @@ Resources:
           Subscribers:
             - SubscriptionType: SNS
               Address: !Ref AlertTopic
-        # 100% actual - the nuke
+        # 100% actual - the nuke. Only one SNS subscriber allowed per
+        # notification, so this points at NukeTopic, which is itself
+        # subscribed by both the Lambda and your email.
         - Notification:
             NotificationType: ACTUAL
             ComparisonOperator: GREATER_THAN
             Threshold: 100
             ThresholdType: PERCENTAGE
           Subscribers:
-            - SubscriptionType: SNS
-              Address: !Ref AlertTopic
             - SubscriptionType: SNS
               Address: !Ref NukeTopic
 
