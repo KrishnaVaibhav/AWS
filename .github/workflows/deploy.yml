@@ -33,12 +33,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Debug claim
+      - name: Decode OIDC claims
         run: |
-          echo "repository: ${{ github.repository }}"
-          echo "ref:        ${{ github.ref }}"
-          echo "event:      ${{ github.event_name }}"
-          echo "expected sub: repo:${{ github.repository }}:ref:${{ github.ref }}"
+          TOKEN=$(curl -sS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+            | jq -r '.value')
+          P=$(echo "$TOKEN" | cut -d. -f2)
+          while [ $((${#P} % 4)) -ne 0 ]; do P="${P}="; done
+          echo "$P" | tr '_-' '/+' | base64 -d | jq '{sub, aud, iss, repository, ref}'
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
