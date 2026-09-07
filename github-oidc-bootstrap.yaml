@@ -5,13 +5,16 @@ Description: >
   comes from the repo afterwards.
 
 Parameters:
-  GitHubOrg:
+  SubjectClaimPrefix:
     Type: String
-    Description: Your GitHub username or org name.
-
-  GitHubRepo:
-    Type: String
-    Description: Repository name only, no owner prefix.
+    Description: >
+      The repo portion of the OIDC subject claim, without the trailing
+      :ref:... segment. Get it from:
+        gh api repos/OWNER/REPO/actions/oidc/customization/sub
+      Immutable format (repos created or renamed after 2026-07-15):
+        repo:owner@123456/repo@789012
+      Legacy format:
+        repo:owner/repo
 
   AllowedBranch:
     Type: String
@@ -47,9 +50,8 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
                 # Scoped to one repo AND one branch.
-                # Widen to repo:ORG/REPO:* only if you know why.
                 token.actions.githubusercontent.com:sub:
-                  !Sub 'repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${AllowedBranch}'
+                  !Sub '${SubjectClaimPrefix}:ref:refs/heads/${AllowedBranch}'
       # Admin because the nuke stack creates IAM roles.
       # Narrow this if you later deploy stacks that don't touch IAM.
       ManagedPolicyArns:
