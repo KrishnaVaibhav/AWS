@@ -1,0 +1,343 @@
+name: 🔨 Auction App
+
+# Nothing reaches AWS unless someone runs this workflow by hand
+# (Actions → 🔨 Auction App → Run workflow). Pushes and PRs only lint.
+# Independent of deploy.yml: own paths, own stacks (auction-dev, auction-prod).
+# Both pipelines share the OIDC role and the `aws` environment.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'auction/**'
+      - '.github/workflows/auction.yml'
+  pull_request:
+    paths:
+      - 'auction/**'
+      - '.github/workflows/auction.yml'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: '🎬 deploy, preview (change set only) or destroy'
+        type: choice
+        options: [deploy, preview, destroy]
+        default: deploy
+      stage:
+        description: '🏷️ Stage (stack auction-<stage>)'
+        type: choice
+        options: [dev, prod]
+        default: dev
+      confirm:
+        description: '💥 Destroy only: type the stack name, e.g. auction-dev'
+        type: string
+        default: ''
+
+permissions:
+  id-token: write      # required for OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ACTION: ${{ inputs.action || 'lint' }}
+  STAGE: ${{ inputs.stage || 'dev' }}
+  STACK_NAME: auction-${{ inputs.stage || 'dev' }}
+
+# Manual runs queue per stack and are never cancelled halfway. Lint-only runs
+# (push / PR) get their own group, so they never wait behind a deploy.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('auction-{0}', inputs.stage) || format('auction-lint-{0}', github.ref) }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash        # -eo pipefail, so `cmd | tee` still fails on errors
+
+jobs:
+
+  validate:
+    name: 🔍 Validate & Lint
+    if: inputs.action != 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🧾 Print run context
+        run: |
+          echo "::group::🧾 Run context"
+          echo "🔖 Event      : ${{ github.event_name }}"
+          echo "🌿 Ref        : ${{ github.ref }}"
+          echo "🔢 SHA        : ${{ github.sha }}"
+          echo "🎬 Action     : $ACTION"
+          echo "🏷️  Stack      : $STACK_NAME"
+          echo "🌍 AWS Region : $AWS_REGION"
+          echo "::endgroup::"
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 🧹 Lint template (cfn-lint)
+        run: |
+          echo "::group::🧹 cfn-lint"
+          pip install --quiet cfn-lint
+          cfn-lint --version
+          cfn-lint auction/template.yaml --format parseable
+          echo "::endgroup::"
+
+      - name: 🟩 Check function syntax
+        run: |
+          for f in auction/functions/*/index.mjs; do
+            node --check "$f" && echo "✅ $f"
+          done
+
+      - name: 🐚 Check scripts (shellcheck)
+        run: shellcheck auction/scripts/*.sh && echo "✅ scripts clean"
+
+      - name: 📝 Job summary
+        if: always()
+        run: |
+          {
+            echo "## 🔍 Validate & Lint"
+            echo ""
+            echo "| Check | Status |"
+            echo "|---|---|"
+            echo "| 🧹 cfn-lint · 🟩 node --check · 🐚 shellcheck | \`${{ job.status }}\` |"
+            echo ""
+            echo "🏷️ Stack: \`$STACK_NAME\` · 🌍 Region: \`$AWS_REGION\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  changeset:
+    name: 📋 Change Set (preview)
+    if: inputs.action == 'preview'
+    needs: validate
+    runs-on: ubuntu-latest
+    # No environment, so no approval: a preview applies nothing. Run it from
+    # main, dev or feature/*, the refs the deploy role trusts without one.
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐿️ Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📋 Create change set (no execute)
+        run: |
+          echo "::group::📋 Creating change set"
+          bash auction/scripts/deploy.sh "$STAGE" --preview 2>&1 | tee changeset.txt
+          echo "::endgroup::"
+
+      - name: 🔬 Describe change set details
+        run: |
+          echo "::group::🔬 Change set contents"
+          CS_ARN=$(grep -oE 'arn:aws:cloudformation:[^ ]*changeSet/[^ ]*' changeset.txt | head -1 || true)
+          if [ -n "$CS_ARN" ]; then
+            echo "🔗 Change set: $CS_ARN"
+            aws cloudformation describe-change-set --change-set-name "$CS_ARN" \
+              --query 'Changes[].ResourceChange.{Action:Action,Type:ResourceType,LogicalId:LogicalResourceId,Replacement:Replacement}' \
+              --output table | tee changes.txt
+          else
+            echo "ℹ️ No change set ARN found — likely no changes to apply."
+          fi
+          echo "::endgroup::"
+
+      - name: 📝 Job summary
+        if: always()
+        run: |
+          {
+            echo "## 📋 Change Set Preview"
+            echo ""
+            echo "🏷️ Stack: \`$STACK_NAME\` · 🌍 Region: \`$AWS_REGION\`"
+            echo ""
+            echo '```'
+            cat changes.txt 2>/dev/null || echo "no changes"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 📤 Upload change set artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auction-changeset
+          path: |
+            changeset.txt
+            changes.txt
+          if-no-files-found: ignore
+
+  deploy:
+    name: 🚀 Deploy Stack
+    if: inputs.action == 'deploy'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: aws
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐿️ Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔎 Pre-deploy stack state
+        run: |
+          echo "::group::🔎 Existing stack status"
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].{Status:StackStatus,Updated:LastUpdatedTime,Created:CreationTime}' \
+            --output table 2>/dev/null || echo "ℹ️ Stack does not exist yet — this will be a CREATE."
+          echo "::endgroup::"
+
+      - name: 🚀 Deploy, publish web, smoke test
+        run: bash auction/scripts/deploy.sh "$STAGE"
+
+      - name: 📊 Show stack outputs
+        if: always()
+        run: |
+          echo "::group::📊 Stack outputs"
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs' --output json | tee outputs.json || true
+          echo "::endgroup::"
+
+      - name: 🕒 Show recent stack events
+        if: always()
+        run: |
+          echo "::group::🕒 Last 25 stack events"
+          aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --max-items 25 \
+            --query 'StackEvents[].{Time:Timestamp,Logical:LogicalResourceId,Status:ResourceStatus,Reason:ResourceStatusReason}' \
+            --output table | tee events.txt || true
+          echo "::endgroup::"
+
+      - name: 📝 Job summary
+        if: always()
+        run: |
+          {
+            echo "## 🚀 Deploy Stack"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| 🏷️ Stack | \`$STACK_NAME\` |"
+            echo "| 🌍 Region | \`$AWS_REGION\` |"
+            echo "| 🔢 Commit | \`${{ github.sha }}\` |"
+            echo "| 📌 Result | \`${{ job.status }}\` |"
+            echo ""
+            echo "### 📊 Stack Outputs"
+            echo '```json'
+            cat outputs.json 2>/dev/null || echo "[]"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 📤 Upload deploy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auction-deploy-outputs
+          path: |
+            outputs.json
+            events.txt
+          if-no-files-found: ignore
+
+  confirm:
+    name: 🛑 Confirm Destroy
+    # No AWS access here, so a typo fails fast, before anyone is asked to approve.
+    if: inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛑 Check typed stack name
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "$STACK_NAME" ]; then
+            echo "❌ Type '$STACK_NAME' in the confirm box to destroy it (got '$CONFIRM')."
+            exit 1
+          fi
+          echo "✅ Confirmed: $STACK_NAME will be deleted once the aws environment is approved."
+
+  destroy:
+    name: 💥 Destroy Stack
+    if: inputs.action == 'destroy'
+    needs: confirm
+    runs-on: ubuntu-latest
+    environment: aws
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 💥 Unlock data, empty buckets, delete stack
+        run: bash auction/scripts/destroy.sh "$STAGE"
+
+      - name: 📝 Job summary
+        if: always()
+        run: |
+          {
+            echo "## 💥 Destroy Stack"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| 🏷️ Stack | \`$STACK_NAME\` |"
+            echo "| 🌍 Region | \`$AWS_REGION\` |"
+            echo "| 👤 Actor | \`${{ github.actor }}\` |"
+            echo "| 📌 Result | \`${{ job.status }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  summary:
+    name: 🧾 Pipeline Summary
+    if: always()
+    needs: [validate, changeset, deploy, confirm, destroy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🧾 Print pipeline summary
+        run: |
+          icon() {
+            case "$1" in
+              success)   echo "✅" ;;
+              failure)   echo "❌" ;;
+              cancelled) echo "🚫" ;;
+              skipped)   echo "⏭️" ;;
+              *)         echo "❔" ;;
+            esac
+          }
+          V="${{ needs.validate.result }}"
+          C="${{ needs.changeset.result }}"
+          D="${{ needs.deploy.result }}"
+          K="${{ needs.confirm.result }}"
+          X="${{ needs.destroy.result }}"
+          {
+            echo "# 🧾 Auction Pipeline Summary"
+            echo ""
+            echo "| Stage | Result |"
+            echo "|---|---|"
+            echo "| 🔍 Validate & Lint | $(icon "$V") \`$V\` |"
+            echo "| 📋 Change Set (preview) | $(icon "$C") \`$C\` |"
+            echo "| 🚀 Deploy Stack | $(icon "$D") \`$D\` |"
+            echo "| 🛑 Confirm Destroy | $(icon "$K") \`$K\` |"
+            echo "| 💥 Destroy Stack | $(icon "$X") \`$X\` |"
+            echo ""
+            echo "🎬 Action: \`$ACTION\` · 🏷️ Stack: \`$STACK_NAME\` · 🌍 Region: \`$AWS_REGION\` · 👤 \`${{ github.actor }}\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: ❌ Fail if any stage failed
+        if: contains(needs.*.result, 'failure')
+        run: |
+          echo "❌ One or more pipeline stages failed."
+          exit 1

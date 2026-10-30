@@ -29,6 +29,7 @@
 | 🔥 | [Arming](#-arming) |
 | 🛡️ | [Safety & circularity](#️-safety--circularity) |
 | 📤 | [Outputs](#-outputs) |
+| 🔨 | [Auction app (separate stack)](#-auction-app-separate-stack) |
 | 📝 | [Notes](#-notes) |
 
 ---
@@ -100,7 +101,7 @@ No AWS access keys are stored anywhere. GitHub mints a short-lived OIDC token, A
 |---|---|---|---|
 | ① | 🔍 **validate** | every trigger | 🧾 run context · 🪪 decode OIDC claims · 🧑‍💼 `sts get-caller-identity` · ✅ `validate-template` · 🧹 `cfn-lint` |
 | ② | 📋 **changeset** | `pull_request` | 📋 `deploy --no-execute-changeset` · 🔬 `describe-change-set` · 📤 artifact + PR summary |
-| ③ | 🚀 **deploy** | `push` to `main` / `workflow_dispatch` | 🔎 pre-deploy state · 🚀 `cfn deploy` · 📊 outputs · ⚙️ params · 🧱 resources · 🕒 events |
+| ③ | 🚀 **deploy** | `workflow_dispatch` only (Run workflow) | 🔎 pre-deploy state · 🚀 `cfn deploy` · 📊 outputs · ⚙️ params · 🧱 resources · 🕒 events |
 | ④ | 🧾 **summary** | `always()` | ✅/❌/🚫/⏭️ per-stage report to `$GITHUB_STEP_SUMMARY`, fails the run if any stage failed |
 
 Every step wraps its output in `::group::` blocks and every job writes a markdown block to the job summary, so the run page is readable without digging through raw logs.
@@ -113,7 +114,7 @@ flowchart TD
     DEV["👨‍💻 Developer"] --> GH["📦 Repository<br/>stacks/**"]
     GH --> V["🔍 ① validate"]
     V -->|pull_request| CS["📋 ② changeset"]
-    V -->|push / dispatch| DP["🚀 ③ deploy"]
+    V -->|dispatch only| DP["🚀 ③ deploy"]
     CS -.-> SM["🧾 ④ summary"]
     DP -.-> SM
     V -- "OIDC token" --> OIDC["🛡️ IAM OIDC Provider"]
@@ -132,7 +133,9 @@ flowchart TD
 AWS/
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml            🔄 validate → changeset → deploy → summary
+│       ├── deploy.yml            🔄 validate → changeset → deploy → summary
+│       └── auction.yml           🔨 auction app: deploy or destroy, independent of deploy.yml
+├── auction/                      🔨 auction app — own stacks, see auction/README.md
 ├── docs/
 │   ├── architecture.svg          🏗️ runtime architecture diagram
 │   └── pipeline.svg              🔄 CI/CD diagram
@@ -226,10 +229,10 @@ sequenceDiagram
 | Trigger | Jobs that run | Applies changes? | Arms the nuke? |
 |---|---|---|---|
 | 🔀 Pull request touching `stacks/` | 🔍 validate → 📋 changeset → 🧾 summary | ❌ preview only | ❌ |
-| 🚢 Push to `main` | 🔍 validate → 🚀 deploy → 🧾 summary | ✅ | ❌ always `false` |
+| 🚢 Push to `main` | 🔍 validate → 🧾 summary | ❌ validate only | ❌ |
 | 🎛️ Manual dispatch | 🔍 validate → 🚀 deploy → 🧾 summary | ✅ | ⚠️ your choice |
 
-Arming is deliberately manual. A push can never arm it — the workflow falls back to `ArmNuke=false` whenever the run wasn't a `workflow_dispatch`.
+Deploying is deliberately manual: **Actions → 🚀 Deploy CloudFormation → Run workflow**. A push only validates, so it can never deploy or arm anything. Arming is a separate choice on the same form, and it is `false` by default.
 
 ---
 
@@ -276,13 +279,13 @@ Add yourself under **Required reviewers**. Arming the nuke then needs an approva
 
 ⚠️ The workflow references `environment: aws`. Skip this step and either delete that line or deploys will hang waiting for an environment that doesn't exist.
 
-### 4️⃣ Push
+### 4️⃣ Push, then run
 
 ```bash
 git add . && git commit -m "budget nuke" && git push
 ```
 
-Deploys **disarmed**. Confirm the two SNS subscription emails that arrive.
+The push only validates. To deploy, go to **Actions → 🚀 Deploy CloudFormation → Run workflow** with `arm_nuke: false`, then approve. This deploys **disarmed**. Confirm the two SNS subscription emails that arrive.
 
 ---
 
@@ -320,6 +323,17 @@ The nuke would happily delete the OIDC provider and the deploy role, locking Git
 | `Armed` | 💣 current value of `ArmNuke` |
 
 The 🚀 deploy job prints these as a table **and** as JSON, plus the stack parameters, all resources, and the last 25 stack events — then uploads `outputs.json`, `resources.txt` and `events.txt` as artifacts.
+
+---
+
+## 🔨 Auction app (separate stack)
+
+[`auction/`](auction/README.md) is a fully configurable auction platform on serverless AWS, with an idle cost of about $0. It lives in its own stacks, `auction-dev` and `auction-prod`, and has its own workflow, [`auction.yml`](.github/workflows/auction.yml). That workflow can deploy, preview or destroy a stage and reuses the same OIDC role and `aws` environment. Pushes to `stacks/**` never trigger it, and pushes to `auction/**` never trigger `deploy.yml`.
+
+Neither pipeline deploys on a push. Both only change AWS when you run them from **Actions → Run workflow**.
+
+> [!WARNING]
+> The nuke's keep filters do **not** cover `auction-*`. If the nuke is armed in the same account, a budget breach deletes the auction app and its data. Run production in its own account. See [auction/docs/architecture.md §8](auction/docs/architecture.md#8-cost).
 
 ---
 

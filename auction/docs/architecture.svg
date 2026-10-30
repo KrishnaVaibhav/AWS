@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1700 1250" width="1700" height="1250" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif"><rect width="1700" height="1250" fill="#0B1725"/>
+<defs>
+  <linearGradient id="g_compute" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFB870"/><stop offset="1" stop-color="#ED7100"/></linearGradient>
+  <linearGradient id="g_integ" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF6FB0"/><stop offset="1" stop-color="#E7157B"/></linearGradient>
+  <linearGradient id="g_devtools" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#D879E8"/><stop offset="1" stop-color="#C925D1"/></linearGradient>
+  <linearGradient id="g_security" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F5788A"/><stop offset="1" stop-color="#DD344C"/></linearGradient>
+  <linearGradient id="g_mgmt" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF7CA8"/><stop offset="1" stop-color="#C7215C"/></linearGradient>
+  <linearGradient id="g_finops" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8FD16A"/><stop offset="1" stop-color="#277116"/></linearGradient>
+  <linearGradient id="g_neutral" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9FB4CC"/><stop offset="1" stop-color="#5C78FA"/></linearGradient>
+  <linearGradient id="g_danger" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF8A6B"/><stop offset="1" stop-color="#D93B1F"/></linearGradient>
+  <linearGradient id="g_git" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A6B6C9"/><stop offset="1" stop-color="#57708C"/></linearGradient>
+  <linearGradient id="g_network" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#B794FF"/><stop offset="1" stop-color="#8C4FFF"/></linearGradient>
+  <linearGradient id="g_storage" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#B5E06A"/><stop offset="1" stop-color="#3F8624"/></linearGradient>
+  <linearGradient id="g_db" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7AA2FF"/><stop offset="1" stop-color="#3B48CC"/></linearGradient>
+  <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5E86B5"/></marker>
+  <marker id="arwd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6E5FA8"/></marker>
+  <marker id="arwr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D93B1F"/></marker>
+  <filter id="sh" x="-30%" y="-30%" width="160%" height="180%"><feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#000" flood-opacity="0.45"/></filter>
+</defs>
+<text x="48" y="60" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="30" fill="#E9F1FA" font-weight="700">auction · runtime architecture</text>
+<text x="48" y="90" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#93A9C4">Serverless only. One CloudFormation stack per stage (auction-dev, auction-prod), us-east-1. Idle cost ≈ $0.</text>
+<rect x="48" y="104" width="120" height="4" rx="2" fill="#FF9900"/>
+<rect x="30" y="290" width="1640" height="890" rx="20" fill="#0E1B2B" fill-opacity="0.55" stroke="#3A5877" stroke-width="1.4" stroke-dasharray="8 6"/>
+<text x="50" y="1168" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#3A5877" font-weight="600" letter-spacing="1.4">AWS ACCOUNT · us-east-1 · CFN STACK: auction-&lt;stage&gt;</text>
+<g filter="url(#sh)"><rect x="470" y="135" width="340" height="120" rx="16" fill="#132133" stroke="#3A5877" stroke-width="1.6"/></g>
+<rect x="488" y="153" width="46" height="46" rx="11" fill="url(#g_neutral)"/>
+<text x="511" y="181" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">&lt;/&gt;</text>
+<text x="548" y="173" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Browser / PWA</text>
+<text x="548" y="192" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">hosts + bidders</text>
+<text x="488" y="223" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">React SPA (placeholder page today)</text>
+<text x="488" y="243" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">token in x-auth-token header</text>
+<g filter="url(#sh)"><rect x="1290" y="135" width="350" height="120" rx="16" fill="#132133" stroke="#3A5877" stroke-width="1.6"/></g>
+<rect x="1308" y="153" width="46" height="46" rx="11" fill="url(#g_integ)"/>
+<text x="1331" y="181" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">WP</text>
+<text x="1368" y="173" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Web Push services</text>
+<text x="1368" y="192" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">FCM · Mozilla · Apple</text>
+<text x="1308" y="223" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">VAPID keys, no vendor account</text>
+<text x="1308" y="243" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">free</text>
+<g filter="url(#sh)"><rect x="60" y="340" width="340" height="160" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="78" y="358" width="46" height="46" rx="11" fill="url(#g_security)"/>
+<text x="101" y="386" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">ID</text>
+<text x="138" y="378" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Cognito user pool</text>
+<text x="138" y="397" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">Essentials · 10k MAU free</text>
+<text x="78" y="428" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">email sign-in · TOTP MFA</text>
+<text x="78" y="448" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">groups: admin, host</text>
+<text x="78" y="468" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">DeletionProtection=DataProtection</text>
+<g filter="url(#sh)"><rect x="470" y="340" width="340" height="160" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="488" y="358" width="46" height="46" rx="11" fill="url(#g_network)"/>
+<text x="511" y="386" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">CF</text>
+<text x="548" y="378" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">CloudFront</text>
+<text x="548" y="397" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">1 TB + 10M req/mo free</text>
+<text x="488" y="428" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">/*       -&gt; web bucket</text>
+<text x="488" y="448" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">/media/* -&gt; media bucket</text>
+<text x="488" y="468" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">/api/*   -&gt; API URL (OAC)</text>
+<g filter="url(#sh)"><rect x="880" y="340" width="340" height="160" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="898" y="358" width="46" height="46" rx="11" fill="url(#g_integ)"/>
+<text x="921" y="386" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">WS</text>
+<text x="958" y="378" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">AppSync Events</text>
+<text x="958" y="397" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">WebSocket pub/sub</text>
+<text x="898" y="428" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">/public/*   API key</text>
+<text x="898" y="448" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">/user/{sub} Cognito, own only</text>
+<text x="898" y="468" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">publish: IAM, Lambdas only</text>
+<g filter="url(#sh)"><rect x="1290" y="340" width="350" height="160" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="1308" y="358" width="46" height="46" rx="11" fill="url(#g_finops)"/>
+<text x="1331" y="386" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">ST</text>
+<text x="1368" y="378" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Stages</text>
+<text x="1368" y="397" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">auction-dev · auction-prod</text>
+<text x="1308" y="428" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">dev: on-demand, no PITR</text>
+<text x="1308" y="448" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">prod: free 25/25 + PITR</text>
+<text x="1308" y="468" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">prod: DataProtection = true</text>
+<text x="1308" y="488" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">same template, own stack each</text>
+<g filter="url(#sh)"><rect x="60" y="570" width="340" height="150" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="78" y="588" width="46" height="46" rx="11" fill="url(#g_storage)"/>
+<text x="101" y="616" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">S3</text>
+<text x="138" y="608" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">S3 · web bucket</text>
+<text x="138" y="627" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">app + config.json</text>
+<text x="78" y="658" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">private, read only via OAC</text>
+<text x="78" y="678" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">snapshots + search index (P1)</text>
+<g filter="url(#sh)"><rect x="470" y="570" width="340" height="150" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="488" y="588" width="46" height="46" rx="11" fill="url(#g_compute)"/>
+<text x="511" y="616" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">λ</text>
+<text x="548" y="608" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">API Lambda</text>
+<text x="548" y="627" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">Function URL · AWS_IAM</text>
+<text x="488" y="658" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">/api/* routes · health check live</text>
+<text x="488" y="678" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">bid engine: TransactWriteItems</text>
+<text x="488" y="698" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">presign uploads · schedules</text>
+<g filter="url(#sh)"><rect x="880" y="570" width="340" height="150" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="898" y="588" width="46" height="46" rx="11" fill="url(#g_compute)"/>
+<text x="921" y="616" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">λ</text>
+<text x="958" y="608" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Stream Lambda</text>
+<text x="958" y="627" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">DynamoDB Streams consumer</text>
+<text x="898" y="658" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">live push -&gt; AppSync Events</text>
+<text x="898" y="678" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">outbid -&gt; Web Push</text>
+<text x="898" y="698" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">snapshots -&gt; S3 web bucket</text>
+<g filter="url(#sh)"><rect x="1290" y="570" width="350" height="150" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="1308" y="588" width="46" height="46" rx="11" fill="url(#g_mgmt)"/>
+<text x="1331" y="616" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">CW</text>
+<text x="1368" y="608" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">CloudWatch Logs</text>
+<text x="1368" y="627" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">one group per function</text>
+<text x="1308" y="658" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">7-day retention</text>
+<text x="1308" y="678" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">deleted with the stack</text>
+<g filter="url(#sh)"><rect x="60" y="790" width="340" height="150" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="78" y="808" width="46" height="46" rx="11" fill="url(#g_storage)"/>
+<text x="101" y="836" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">S3</text>
+<text x="138" y="828" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">S3 · media bucket</text>
+<text x="138" y="847" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">incoming/ -&gt; media/</text>
+<text x="78" y="878" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">browser uploads: presigned POST</text>
+<text x="78" y="898" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">incoming/ expires after 1 day</text>
+<text x="78" y="918" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">only media/ is ever served</text>
+<g filter="url(#sh)"><rect x="470" y="790" width="340" height="150" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="488" y="808" width="46" height="46" rx="11" fill="url(#g_db)"/>
+<text x="511" y="836" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">DB</text>
+<text x="548" y="828" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">DynamoDB</text>
+<text x="548" y="847" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">single table · GSI1 · GSI2</text>
+<text x="488" y="878" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">ITEM#id/STATE  hot, &lt; 1 KB</text>
+<text x="488" y="898" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">BID# ledger · MAX# proxy</text>
+<text x="488" y="918" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">Streams · TTL · PITR in prod</text>
+<g filter="url(#sh)"><rect x="1290" y="790" width="350" height="150" rx="16" fill="#132133" stroke="#3A5877" stroke-width="1.6" stroke-dasharray="7 5"/></g>
+<rect x="1308" y="808" width="46" height="46" rx="11" fill="url(#g_git)"/>
+<text x="1331" y="836" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">+</text>
+<text x="1368" y="828" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Optional integrations</text>
+<text x="1368" y="847" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">only when needed</text>
+<text x="1308" y="878" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">Stripe Checkout / Connect</text>
+<text x="1308" y="898" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">SES email · Route 53 domain</text>
+<text x="1308" y="918" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">Turnstile · YouTube embed</text>
+<g filter="url(#sh)"><rect x="60" y="1010" width="340" height="140" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="78" y="1028" width="46" height="46" rx="11" fill="url(#g_compute)"/>
+<text x="101" y="1056" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">λ</text>
+<text x="138" y="1048" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Media Lambda</text>
+<text x="138" y="1067" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">S3 event on incoming/</text>
+<text x="78" y="1098" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">magic bytes + size caps</text>
+<text x="78" y="1118" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">P1: sharp + ffmpeg layers</text>
+<g filter="url(#sh)"><rect x="470" y="1010" width="340" height="140" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="488" y="1028" width="46" height="46" rx="11" fill="url(#g_integ)"/>
+<text x="511" y="1056" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">at</text>
+<text x="548" y="1048" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">EventBridge Scheduler</text>
+<text x="548" y="1067" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">group = stack name</text>
+<text x="488" y="1098" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">at(closesAt), one per item</text>
+<text x="488" y="1118" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">group deleted with the stack</text>
+<g filter="url(#sh)"><rect x="880" y="1010" width="340" height="140" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="898" y="1028" width="46" height="46" rx="11" fill="url(#g_compute)"/>
+<text x="921" y="1056" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">λ</text>
+<text x="958" y="1048" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Closer Lambda</text>
+<text x="958" y="1067" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">Scheduler target</text>
+<text x="898" y="1098" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">soft close -&gt; reschedule</text>
+<text x="898" y="1118" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">close · winner · invoice</text>
+<g filter="url(#sh)"><rect x="1290" y="1010" width="350" height="140" rx="16" fill="#132133" stroke="#263D57" stroke-width="1.6"/></g>
+<rect x="1308" y="1028" width="46" height="46" rx="11" fill="url(#g_compute)"/>
+<text x="1331" y="1056" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">λ</text>
+<text x="1368" y="1048" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" fill="#E9F1FA" font-weight="600">Cron Lambda</text>
+<text x="1368" y="1067" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#93A9C4">rate(1 minute)</text>
+<text x="1308" y="1098" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">ending-soon alerts via GSI1</text>
+<text x="1308" y="1118" font-family="'Segoe UI','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="13" fill="#6C839E">cleanup</text>
+<path d="M640,255 L640,340" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="616.0" y="290" width="48.0" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="640" y="303" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">HTTPS</text>
+<path d="M470,195 L230,195 L230,340" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="308.8" y="186" width="62.4" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="340" y="199" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">sign-in</text>
+<path d="M810,195 L1050,195 L1050,340" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="870.0" y="186" width="120.0" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="930" y="199" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">WSS · live bids</text>
+<path d="M520,500 L520,535 L230,535 L230,570" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="361.8" y="526" width="26.4" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="375" y="539" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">/*</text>
+<path d="M640,500 L640,570" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="612.4" y="526" width="55.2" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="640" y="539" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">/api/*</text>
+<path d="M470,470 L435,470 L435,865 L400,865" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<g transform="rotate(-90 435 686)"><rect x="400.2" y="677" width="69.6" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="435" y="690" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">/media/*</text></g>
+<path d="M640,720 L640,790" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="580.0" y="746" width="120.0" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="640" y="759" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">bid transaction</text>
+<path d="M810,865 L1050,865 L1050,720" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="898.8" y="856" width="62.4" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="930" y="869" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">Streams</text>
+<path d="M1050,570 L1050,500" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="997.2" y="526" width="105.6" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="1050" y="539" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">publish · IAM</text>
+<path d="M1220,640 L1255,640 L1255,195 L1290,195" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<g transform="rotate(-90 1255 416)"><rect x="1220.2" y="407" width="69.6" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="1255" y="420" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">Web Push</text></g>
+<path d="M200,940 L200,1010" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="128.4" y="966" width="69.6" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="192" y="979" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="end">S3 event</text>
+<path d="M270,1010 L270,940" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="272.0" y="966" width="55.2" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="278" y="979" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="start">media/</text>
+<path d="M400,1045 L445,1045 L445,975 L560,975 L560,940" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="463.6" y="966" width="76.8" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="502" y="979" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">item META</text>
+<path d="M810,680 L845,680 L845,1050 L810,1050" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<g transform="rotate(-90 845 786)"><rect x="788.6" y="777" width="112.8" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="845" y="790" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">CreateSchedule</text></g>
+<path d="M810,1100 L880,1100" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="824.6" y="1091" width="40.8" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="845" y="1104" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">at()</text>
+<path d="M1000,1010 L1000,968 L760,968 L760,940" fill="none" stroke="#5E86B5" stroke-width="2" stroke-linejoin="round" marker-end="url(#arw)"/>
+<rect x="864.2" y="959" width="141.6" height="18" rx="5" fill="#0B1725" fill-opacity="0.92"/><text x="935" y="972" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#9FB4CC" text-anchor="middle">close · reschedule</text>
+<text x="48" y="1222" font-family="'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace" font-size="12" fill="#6C839E">——&gt; request / event      - - -&gt; optional      DataProtection=true: table + user pool refuse deletion · destroy.sh unlocks, empties both buckets, deletes the stack</text>
+</svg>

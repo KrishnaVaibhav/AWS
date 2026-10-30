@@ -189,7 +189,8 @@ jobs:
 
   deploy:
     name: 🚀 Deploy Stack
-    if: github.event_name != 'pull_request'
+    # Only when run by hand (Actions → Run workflow). A push just validates.
+    if: github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-latest
     # Optional: set up a GitHub Environment with required reviewers

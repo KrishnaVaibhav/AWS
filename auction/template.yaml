@@ -1,0 +1,653 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Auction platform. Serverless only, one stack per stage (auction-dev,
+  auction-prod). Deployed and destroyed by auction/scripts/*.sh, locally or
+  from .github/workflows/auction.yml.
+
+Parameters:
+
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+    Description: >
+      dev = on-demand DynamoDB, no PITR (idle costs nothing).
+      prod = provisioned 25 WCU / 25 RCU (the always-free amount) + PITR.
+
+  DataProtection:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: >
+      true = the table and the user pool refuse deletion. destroy.sh sets
+      this to false before it deletes the stack.
+
+  ApiKeyExpires:
+    Type: Number
+    Description: >
+      Expiry of the public AppSync Events key, in epoch seconds, at most 365
+      days ahead. deploy.sh sets it to today + 360 days on every deploy.
+
+  ApiReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: >
+      Max concurrent API executions, which also caps API cost. 0 = no cap.
+      New accounts may need a Lambda concurrency quota increase first.
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, prod]
+  Protect: !Equals [!Ref DataProtection, 'true']
+  CapApi: !Not [!Equals [!Ref ApiReservedConcurrency, 0]]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 10
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        TABLE_NAME: !Ref Table
+
+Resources:
+
+  # ── Data ────────────────────────────────────────────────────────────
+
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete          # destroy really removes it
+    UpdateReplacePolicy: Retain     # an update that forces replacement keeps the old data
+    Properties:
+      TableName: !Ref AWS::StackName
+      BillingMode: !If [IsProd, PROVISIONED, PAY_PER_REQUEST]
+      # prod: table 15/15 + GSI1 5/5 + GSI2 5/5 = 25/25, the always-free amount.
+      ProvisionedThroughput: !If
+        - IsProd
+        - { ReadCapacityUnits: 15, WriteCapacityUnits: 15 }
+        - !Ref AWS::NoValue
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: GSI1PK, AttributeType: S }
+        - { AttributeName: GSI1SK, AttributeType: S }
+        - { AttributeName: GSI2PK, AttributeType: S }
+        - { AttributeName: GSI2SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1           # STATUS#open -> closesAt: ending soon, upcoming
+          KeySchema:
+            - { AttributeName: GSI1PK, KeyType: HASH }
+            - { AttributeName: GSI1SK, KeyType: RANGE }
+          Projection: { ProjectionType: KEYS_ONLY }
+          ProvisionedThroughput: !If
+            - IsProd
+            - { ReadCapacityUnits: 5, WriteCapacityUnits: 5 }
+            - !Ref AWS::NoValue
+        - IndexName: GSI2           # HOST#uid -> createdAt: host dashboard
+          KeySchema:
+            - { AttributeName: GSI2PK, KeyType: HASH }
+            - { AttributeName: GSI2SK, KeyType: RANGE }
+          Projection: { ProjectionType: KEYS_ONLY }
+          ProvisionedThroughput: !If
+            - IsProd
+            - { ReadCapacityUnits: 5, WriteCapacityUnits: 5 }
+            - !Ref AWS::NoValue
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+      DeletionProtectionEnabled: !If [Protect, true, false]
+
+  WebBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      # Fixed name, so MediaFunction's policy can name the bucket without a Ref.
+      # A Ref there plus this bucket's S3 event on the function = circular dependency.
+      BucketName: !Sub '${AWS::StackName}-media-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          # Browsers upload straight to S3 with presigned POST/PUT. The signature
+          # is the auth; narrow the origin once the app has its own domain.
+          - AllowedMethods: [POST, PUT]
+            AllowedOrigins: ['*']
+            AllowedHeaders: ['*']
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-unprocessed-uploads
+            Status: Enabled
+            Prefix: incoming/
+            ExpirationInDays: 1
+          - Id: abort-stale-multipart
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontRead
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${WebBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontReadProcessedOnly   # incoming/ is never served
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${MediaBucket.Arn}/media/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  # ── Identity ────────────────────────────────────────────────────────
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Ref AWS::StackName
+      UserPoolTier: ESSENTIALS      # 10k MAU free, no expiry
+      DeletionProtection: !If [Protect, ACTIVE, INACTIVE]
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      MfaConfiguration: OPTIONAL
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: verified_email, Priority: 1 }
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: web
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      SupportedIdentityProviders: [COGNITO]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      CallbackURLs:
+        - !Sub 'https://${Distribution.DomainName}/auth/callback'
+      LogoutURLs:
+        - !Sub 'https://${Distribution.DomainName}/'
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub '${AWS::StackName}-${AWS::AccountId}'
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: admin
+      Description: Platform moderators
+
+  HostGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: host
+      Description: Verified hosts
+
+  # ── Live updates (AppSync Events) ───────────────────────────────────
+
+  EventsApi:
+    Type: AWS::AppSync::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-events'
+      EventConfig:
+        AuthProviders:
+          - AuthType: API_KEY
+          - AuthType: AWS_IAM
+          - AuthType: AMAZON_COGNITO_USER_POOLS
+            CognitoConfig:
+              AwsRegion: !Ref AWS::Region
+              UserPoolId: !Ref UserPool
+        ConnectionAuthModes:
+          - AuthType: API_KEY
+          - AuthType: AWS_IAM
+          - AuthType: AMAZON_COGNITO_USER_POOLS
+        # Only Lambdas (IAM) publish. Browsers only subscribe.
+        DefaultPublishAuthModes:
+          - AuthType: AWS_IAM
+        DefaultSubscribeAuthModes:
+          - AuthType: API_KEY
+          - AuthType: AMAZON_COGNITO_USER_POOLS
+
+  # /public/items/{id}, /public/live/{auctionId}: anyone, logged in or not.
+  PublicNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Name: public
+
+  # /user/{sub}: outbid, won, payment due. Each user hears only their own channel.
+  UserNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Name: user
+      SubscribeAuthModes:
+        - AuthType: AMAZON_COGNITO_USER_POOLS
+      CodeHandlers: |
+        import { util } from '@aws-appsync/utils';
+
+        export function onSubscribe(ctx) {
+          if (ctx.info.channel.path !== `/user/${ctx.identity.sub}`) {
+            util.unauthorized();
+          }
+        }
+
+  EventsApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Description: Public, subscribe-only key for logged-out viewers
+      Expires: !Ref ApiKeyExpires
+
+  # ── Timers ──────────────────────────────────────────────────────────
+
+  # One-time at(closesAt) schedules are created here at runtime. Deleting the
+  # group (on stack delete) deletes every schedule inside it.
+  ScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Ref AWS::StackName
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: invoke-closer
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                # Built from the name, not GetAtt: CloserFunction already
+                # references this role, so a GetAtt here would be circular.
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-closer'
+
+  # ── Functions ───────────────────────────────────────────────────────
+  # Every function logs to its own group in this stack, so a stack delete
+  # leaves no orphaned /aws/lambda/* groups behind.
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/auction/${AWS::StackName}/api'
+      RetentionInDays: 7
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      Description: /api/* router behind CloudFront
+      CodeUri: functions/api/
+      Handler: index.handler
+      ReservedConcurrentExecutions: !If [CapApi, !Ref ApiReservedConcurrency, !Ref AWS::NoValue]
+      LoggingConfig:
+        LogFormat: JSON
+        LogGroup: !Ref ApiLogGroup
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+          MEDIA_BUCKET: !Ref MediaBucket
+          SCHEDULE_GROUP: !Ref ScheduleGroup
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
+          CLOSER_ARN: !GetAtt CloserFunction.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Statement:
+            - Sid: PresignUploads
+              Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub '${MediaBucket.Arn}/incoming/*'
+            - Sid: ScheduleItemClose
+              Effect: Allow
+              Action: [scheduler:CreateSchedule, scheduler:UpdateSchedule, scheduler:DeleteSchedule]
+              Resource: !Sub 'arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ScheduleGroup}/*'
+            - Sid: PassSchedulerRole
+              Effect: Allow
+              Action: iam:PassRole
+              Resource: !GetAtt SchedulerRole.Arn
+
+  # AWS_IAM + CloudFront OAC: the URL only answers requests CloudFront signed.
+  ApiFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref ApiFunction
+      AuthType: AWS_IAM
+
+  ApiUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunctionUrl
+      FunctionUrlAuthType: AWS_IAM
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  MediaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/auction/${AWS::StackName}/media'
+      RetentionInDays: 7
+
+  MediaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-media'
+      Description: Validates uploads in incoming/ and moves them to media/
+      CodeUri: functions/media/
+      Handler: index.handler
+      MemorySize: 1024
+      Timeout: 120
+      LoggingConfig:
+        LogFormat: JSON
+        LogGroup: !Ref MediaLogGroup
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [s3:GetObject, s3:GetObjectTagging, s3:DeleteObject]
+              Resource: !Sub 'arn:aws:s3:::${AWS::StackName}-media-${AWS::AccountId}-${AWS::Region}/incoming/*'
+            - Effect: Allow
+              Action: [s3:PutObject, s3:PutObjectTagging]
+              Resource: !Sub 'arn:aws:s3:::${AWS::StackName}-media-${AWS::AccountId}-${AWS::Region}/media/*'
+      Events:
+        Upload:
+          Type: S3
+          Properties:
+            Bucket: !Ref MediaBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - { Name: prefix, Value: incoming/ }
+
+  StreamLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/auction/${AWS::StackName}/stream'
+      RetentionInDays: 7
+
+  StreamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-stream'
+      Description: DynamoDB Streams fan-out (live push, Web Push, snapshots)
+      CodeUri: functions/stream/
+      Handler: index.handler
+      LoggingConfig:
+        LogFormat: JSON
+        LogGroup: !Ref StreamLogGroup
+      Environment:
+        Variables:
+          EVENTS_HTTP: !GetAtt EventsApi.Dns.Http
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: appsync:EventPublish
+              Resource: !Sub '${EventsApi.ApiArn}/*'
+      Events:
+        Changes:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt Table.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 100
+            MaximumRetryAttempts: 3
+            BisectBatchOnFunctionError: true
+
+  CloserLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/auction/${AWS::StackName}/closer'
+      RetentionInDays: 7
+
+  CloserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-closer'
+      Description: EventBridge Scheduler target, finalizes an item at closesAt
+      CodeUri: functions/closer/
+      Handler: index.handler
+      LoggingConfig:
+        LogFormat: JSON
+        LogGroup: !Ref CloserLogGroup
+      Environment:
+        Variables:
+          SCHEDULE_GROUP: !Ref ScheduleGroup
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Table
+        - Statement:
+            - Sid: RescheduleAfterSoftClose
+              Effect: Allow
+              Action: scheduler:CreateSchedule
+              Resource: !Sub 'arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ScheduleGroup}/*'
+            - Sid: PassSchedulerRole
+              Effect: Allow
+              Action: iam:PassRole
+              Resource: !GetAtt SchedulerRole.Arn
+
+  CronLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/auction/${AWS::StackName}/cron'
+      RetentionInDays: 7
+
+  CronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-cron'
+      Description: Every minute, ending-soon alerts and cleanup
+      CodeUri: functions/cron/
+      Handler: index.handler
+      LoggingConfig:
+        LogFormat: JSON
+        LogGroup: !Ref CronLogGroup
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref Table
+      Events:
+        Sweep:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(1 minute)
+
+  # ── Edge (CloudFront) ───────────────────────────────────────────────
+
+  S3OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-s3'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Signing "always" overwrites the viewer's Authorization header, so the
+  # browser sends its Cognito token in x-auth-token instead.
+  LambdaOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-lambda'
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${AWS::StackName}-spa-rewrite'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Serve index.html for client-side routes
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          if (request.uri.indexOf('.') === -1) {
+            request.uri = '/index.html';
+          }
+          return request;
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Ref AWS::StackName
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        Origins:
+          - Id: web
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt S3OriginAccessControl.Id
+            S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: media
+            DomainName: !GetAtt MediaBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt S3OriginAccessControl.Id
+            S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: api
+            DomainName: !Select [2, !Split ['/', !GetAtt ApiFunctionUrl.FunctionUrl]]
+            OriginAccessControlId: !GetAtt LambdaOriginAccessControl.Id
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: web
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6            # Managed-CachingOptimized
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # Managed-SecurityHeadersPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /media/*
+            TargetOriginId: media
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6            # Managed-CachingOptimized
+            ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # Managed-SecurityHeadersPolicy
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad            # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac    # Managed-AllViewerExceptHostHeader
+
+Outputs:
+  AppUrl:
+    Description: Open this in a browser
+    Value: !Sub 'https://${Distribution.DomainName}'
+  DistributionId:
+    Value: !Ref Distribution
+  WebBucketName:
+    Value: !Ref WebBucket
+  MediaBucketName:
+    Value: !Ref MediaBucket
+  TableName:
+    Value: !Ref Table
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  CognitoDomain:
+    Value: !Sub '${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com'
+  EventsHttpDomain:
+    Value: !GetAtt EventsApi.Dns.Http
+  EventsRealtimeDomain:
+    Value: !GetAtt EventsApi.Dns.Realtime
+  EventsApiKey:
+    Description: Public and subscribe-only. Ships to browsers in config.json.
+    Value: !GetAtt EventsApiKey.ApiKey
+  ScheduleGroupName:
+    Value: !Ref ScheduleGroup
+  DataProtection:
+    Description: true = table and user pool refuse deletion
+    Value: !Ref DataProtection
