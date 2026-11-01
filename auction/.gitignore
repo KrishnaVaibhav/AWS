@@ -1,2 +1,5 @@
 # sam build output
 .aws-sam/
+
+# test dependencies
+node_modules/

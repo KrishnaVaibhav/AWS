@@ -149,7 +149,7 @@ Supported media: images, video, audio, PDF condition reports and certificates, 3
 ### 3.4 Reads and live push
 
 - **AppSync Events channels:**
-  - `/public/items/{id}` and `/public/live/{auctionId}`: subscribe with the public API key, so logged-out visitors also see live prices.
+  - `/public/auction/{auctionId}`: subscribe with the public API key, so logged-out visitors also see live prices. It carries item state (public fields only), results and chat. A members-only chat sends a `chat_ping` instead of the message, and members fetch it from the API, which applies their visibility.
   - `/user/{sub}`: Cognito auth, plus an `onSubscribe` handler that rejects any path other than the subscriber's own.
 - **Publishing:** only Lambdas publish (IAM auth). The Stream Lambda publishes, not the API Lambda, so fan-out never slows a bid.
 - **Read-heavy pages:** item and catalog details are written as JSON snapshots to S3 and served by CloudFront, so browsing uses zero Lambda or DynamoDB reads. Only the live state is dynamic. A CloudFront-cached `/state` endpoint is the polling fallback.
@@ -170,13 +170,26 @@ Single table `auction-<stage>`, keys `PK` / `SK`.
 | `USER#uid` | `BIDON#iid` | "my bids", written by the Stream Lambda, not on the bid path |
 | `AUC#aid` | `META` | host, status, schedule, versioned rules, terms |
 | `AUC#aid` | `ROLE#uid` | co-host, clerk, consignor |
-| `AUC#aid` | `REG#uid` | registration, approval, paddle number, deposit, bid limit |
+| `AUC#aid` | `REG#uid` | registration: status (pending/approved/blocked), alias, paddle, groups, per-field visibility overrides, bid limit, mute, last chat time |
+| `AUC#aid` | `BAL#uid` | balance, available, committed (held for leading bids), version |
+| `AUC#aid` | `LEDGER#uid#ts` | append-only balance change: credit, debit or charge, with reason and who |
+| `AUC#aid` | `LOG#ts` | append-only audit row: actor, action, target, details |
+| `AUC#aid` | `CHAT#ts` | chat message: author, role (host/bidder), text, deleted flag |
+| `AUC#aid` | `PENDING#bidId` | marker for a bid waiting for approval (the owner's queue) |
+| `AUC#aid` | `STAT#yyyy-mm-dd` | page views per day (analytics) |
 | `AUC#aid` | `ITEM#iid` | title, description, custom fields, media, rule overrides (cold data) |
-| `ITEM#iid` | `STATE` | price, nextMin, leader, count, closesAt, extensions, version, status (hot data, under 1 KB) |
-| `ITEM#iid` | `BID#ts#id` | append-only bid ledger |
-| `ITEM#iid` | `MAX#uid` | hidden proxy maximum |
+| `ITEM#iid` | `STATE` | price, nextMin, leader, leader's maximum and balance hold, count, pending count, closesAt, extensions, version, status (hot data, under 1 KB) |
+| `ITEM#iid` | `BID#ts-id` | every bid ever placed, with its maximum and status: pending, accepted, rejected, withdrawn or cancelled. Rows are never deleted |
 | `ITEM#iid` | `OFFER#…` / `Q#…` | best offers, Q&A |
-| `ITEM#iid` | `RESULT` | winner, hammer price, premium, payment status |
+| `ITEM#iid` | `RESULT` | outcome (sold, reserve not met, no bids), how (auction, buy_now, offer), winner, price, amount charged, payment and delivery status |
+| `ITEM#iid` | `SEALED#uid` | a bidder's current sealed bid and its balance hold |
+| `ITEM#iid` | `OFFER#ts-id` | fixed-price offer: amount, message, status (pending, countered, accepted, declined, withdrawn), counter-offer |
+| `ITEM#iid` | `WATCHER#uid` | who watches the item, and whether the ending-soon alert went out |
+| `USER#uid` | `WATCH#iid` / `BIDON#iid` | the user's watchlist and "my bids" pointers |
+| `USER#uid` | `NOTE#ts-id` | inbox notification (TTL 30 days) |
+| `USER#uid` | `PUSH#hash` | a browser's Web Push subscription |
+| `USER#uid` | `TEMPLATE#id` | saved auction rules |
+| `CONFIG` | `VAPID` | the Web Push key pair, made on first use |
 
 **Why `STATE` is its own row:** DynamoDB bills an update on the larger of the old and new item size. A 4 KB item would cost 4 WCU per bid; the small `STATE` row costs 1 WCU (2 inside a transaction).
 
@@ -184,8 +197,12 @@ Single table `auction-<stage>`, keys `PK` / `SK`.
 
 | Index | Partition | Sort | Used for |
 |---|---|---|---|
-| `GSI1` | `GSI1PK = STATUS#open` | `GSI1SK = closesAt` | ending soon, upcoming, cron sweep |
+| `GSI1` | `GSI1PK = STATUS#open` | `GSI1SK = closesAt` | ending soon, cron sweep of overdue items |
+| `GSI1` | `GSI1PK = AUC#live` | `GSI1SK = createdAt` | list of live auctions |
 | `GSI2` | `GSI2PK = HOST#uid` | `GSI2SK = createdAt` | host dashboard |
+| `GSI2` | `GSI2PK = MEMBER#uid` | `GSI2SK = createdAt` | auctions a user joined |
+
+The leader's proxy maximum lives on `STATE` only. A bidder who is outbid has spent their maximum, so no other maximum is ever needed.
 
 **Capacity:**
 - **prod:** table 15/15, GSI1 5/5, GSI2 5/5, which is exactly the free 25/25. That gives about 5 bids/s sustained, plus 300 s of burst credit. For a big event day, switch to on-demand: 1M bids ≈ $4.
@@ -207,62 +224,95 @@ The browser uses it to show "next bid ≥ $X" and to preview a bid. The API Lamb
 
 ### 5.1 Configuration
 
-The config is set per auction. Every key can be overridden per item, and hosts can change limits and deposits per bidder.
+The config is set per auction and validated on every save: an unknown key or a bad value is a 400 that names the setting. Items can override `price`, `increment`, `proxy`, `bidApproval` and their own `opensAt` / `closesAt`. The owner can also set a bid limit, groups and visibility overrides per bidder. These are the defaults (`functions/lib/rules.mjs`):
 
 ```yaml
-format: english          # english|live|sealed_first|sealed_second|dutch|reverse|japanese|candle|multi_unit|fixed_price
-scope: per_item          # per_item|lot|bundle
+format: english
 timing:
-  previewAt: 2026-11-20T15:00Z      # visible, bidding closed
-  opensAt:   2026-11-21T15:00Z
-  closesAt:  2026-11-28T20:00Z
-  closeMode: staggered              # fixed|staggered|candle_window|manual (live)
-  staggerSec: 60
+  opensAt: null             # null = when published
+  closesAt: null            # required before publishing (auction or item)
+  staggerSec: 0             # item N closes N × staggerSec later
   softClose: { windowSec: 120, extendSec: 120, maxExtensions: 30 }
-price:
-  currency: USD
-  start: 100
-  reserve: { amount: 500, show: status_only }    # hidden|status_only|amount
-  buyNow:  { amount: 900, until: first_bid }     # first_bid|reserve_met|close
-  dutch:   { start: 1000, step: 25, everySec: 60, floor: 300 }
+price: { currency: USD, start: 1, reserve: null }
 increment:
-  mode: tiered           # fixed|percent|tiered|bidder_choice
-  fixed: 10
+  mode: fixed               # fixed | percent | tiered | bidder_choice
+  fixed: 1
   percent: 5
-  tiers: [{ upTo: 100, step: 5 }, { upTo: 1000, step: 25 }, { step: 100 }]
-  bidderChoice: { min: 10, max: 5000, presets: [10, 50, 100] }
   roundTo: 1
-  jumpBids: true
-  confirmAbovePct: 50    # fat-finger guard
-proxy: { enabled: true, tieBreak: earliest }
-eligibility:
-  visibility: public     # public|unlisted|invite|access_code
-  registration: approval # none|auto|approval
-  require: [email_verified, mfa, card_on_file, terms_accepted]
-  deposit: { mode: card_hold, amount: 50 }      # none|card_hold|fixed|percent_of_limit
-  bidLimit: 5000
-  countries: [US, CA]
-  minAge: 18
-transparency:
-  bidderIdentity: alias  # public|alias|hidden
-  bidHistory: amounts    # full|amounts|count|hidden
-  showWatchers: true
-fees: { buyersPremiumPct: 10, taxPct: 0, perLotFee: 0 }
-payment: { mode: offline, dueHours: 72, secondChance: true }   # offline|stripe_checkout|stripe_connect
-fulfillment: { pickup: true, shipping: [{ name: Standard, cost: 15 }] }
-conduct:
-  retraction: before_last_hour   # never|before_last_hour|host_approval
-  hostCanBid: false
-  maxBidsPerMinute: 10
-  autoRelist: 1
+  tiers: [{ upTo: 100, step: 5 }, { upTo: 1000, step: 25 }, { upTo: null, step: 100 }]
+  bidderChoice: { min: 1, max: null, presets: [1, 5, 10] }
+  confirmAbovePct: 50       # fat-finger guard; 0 = off
+proxy: { enabled: true, hostSeesMax: false }
+registration: auto          # auto | approval
+bidApproval:
+  mode: none                # none | above | all
+  threshold: 0              # mode above: bids or maximums at or over this wait for the owner
+  adjust: lower             # none | lower | any: may the owner change the amount when approving
+  decideWithinSec: 900      # pending bids can still be decided this long after the close
+  onTimeout: reject         # reject | approve
+balance:
+  enabled: false
+  enforce: true             # refuse bids the available balance can't cover
+  unit: credits
+  allowNegative: false      # may the owner debit below zero
+  startingCredit: 0         # credited once, when a registration is approved
+  showToBidder: true
+limits: { bidLimit: null }
+visibility:                 # public | registered | approved | owner | group:<name>
+  price: public
+  bidCount: public
+  nextMin: public
+  closesAt: public
+  leader: registered        # whether someone leads, and who (masked unless historyIdentities)
+  history: registered       # the bid list
+  historyAmounts: registered
+  historyIdentities: owner  # real alias/paddle instead of "Bidder 1, 2, 3"
+  reserveAmount: owner
+  reserveStatus: public
+  participants: owner
+identity: alias             # alias | paddle | name, for revealed bidders
+board:
+  enabled: true             # the shared standings table
+  audience: registered
+  when: always              # always | after_close
+  columns: [rank, bidder, amount, time, status]   # also: bids
+chat:
+  enabled: true
+  read: registered
+  post: approved
+  identity: alias
+  slowModeSec: 2
+  maxLength: 500
+  hostOnly: false           # announcements only
+conduct: { hostCanBid: false }
 ```
+
+Amounts are whole units (dollars or credits), so there is no rounding drift.
+
+Phase 2 adds these settings (defaults shown):
+
+```yaml
+format: english             # english | sealed_first | sealed_second | dutch | reverse | fixed_price
+price:
+  buyNow: { amount: null, until: first_bid }        # english; until first_bid | reserve_met | close
+  dutch: { start: null, step: 1, everySec: 60, floor: 1 }
+  offers: { enabled: false, autoAccept: null, autoDecline: null }   # fixed_price
+access:
+  mode: public              # public (listed) | unlisted (link only) | code (access code or invite)
+  code: null
+  invites: []               # emails that may join without the code
+payment: { instructions: '', dueHours: 72 }        # shown to winners; settled offline
+```
+
+Items can also override `format`, so one auction can mix English, sealed, Dutch and fixed-price lots. Invalid combinations are refused: Dutch and fixed price can't use bid approval, reverse can't use balances, Buy It Now is English only, offers are fixed price only.
+
+**Still on the roadmap:** Japanese, candle and multi-unit formats, deposits and card holds, eligibility checks (MFA, card on file, country, age), buyer's premium, tax, shipping costs, retraction windows and per-minute bid caps.
 
 **Increment modes:**
 - `fixed` and `percent`
 - `tiered`: a step table by price band, house style
 - `bidder_choice`: the bidder picks the raise, within the host's min/max, with preset buttons
-- Dutch decrement
-- rounding, jump bids on or off, and a confirmation for unusually large jumps.
+- a confirmation for unusually large jumps.
 
 ### 5.2 Proxy bids
 
@@ -294,6 +344,39 @@ After that, apply the soft-close rule and set `nextMin = price + inc(price)`.
 | Charity / silent | QR code per item, mobile bidding, fund-a-need donations |
 
 Skip penny/bid-fee auctions: they carry gambling-law risk.
+
+**Built:** English timed, sealed first-price, sealed second-price, Dutch, reverse, Buy It Now, Make Offer and fixed price. Japanese, candle, multi-unit, lots/bundles and live auctioneer mode are not built yet.
+
+- **Sealed:** one hidden bid per bidder; a new bid replaces the old one. Nobody, the owner included, sees amounts, the leader or the standings until the close. Each bid holds its amount from the balance; at close the losers are released and the winner is charged.
+- **Dutch:** the price is computed from the clock (`start - steps × step`, never below `floor`), so no timer or push is needed for each drop. The first acceptance buys at the current price and closes the item in the same transaction.
+- **Reverse:** the next bid must be at most `price - step`; the lowest bid leads; the reserve is the budget ceiling. The winner is paid offline, so balances are off.
+- **Buy It Now:** available until the first bid, until the reserve is met, or until the close (while the price is below it). Buying closes the item, charges the buyer and releases the leader's hold; any pending bids are rejected.
+- **Offers:** the buyer offers a price; at or over `autoAccept` it sells at once, under `autoDecline` it is declined at once, otherwise the owner accepts, declines or counters, and the buyer can accept a counter. One open offer per buyer per item.
+
+### 5.4 Bid approval
+
+With `bidApproval.mode` set to `above` (by amount or maximum) or `all`, a bid is checked against the rules when it is placed but not applied:
+
+1. It is stored as `pending`, a `PENDING#` marker joins the owner's queue, and the owner gets a live alert.
+2. The owner approves or rejects it. With `adjust: lower` (or `any`) the owner may approve a different amount; the bid keeps what was asked as `originalAmount`.
+3. Approval re-runs the engine against the state at that moment. If the bid is no longer valid (for example it is now below the minimum), the owner is told why and can reject it.
+4. A bid placed before the close can still be decided until `closesAt + decideWithinSec`. The closer waits for that deadline, applies `onTimeout` to whatever is still pending, then closes the item.
+
+Bids the owner enters for a bidder (`onBehalfOf`) never wait for approval. Bidders can withdraw their own pending bids. Maximum bids are off while `mode: all`, because an automatic raise can't wait for a human.
+
+The owner can also cancel an accepted bid, with a reason. The price and leader are then rebuilt by replaying the remaining accepted bids in the order they were accepted.
+
+### 5.5 Balances
+
+With `balance.enabled`, each bidder has a balance per auction that the owner controls:
+
+- **Credit and debit:** the owner adds or subtracts any amount, with a reason. Every change is an append-only `LEDGER` row with who, why and the balance after.
+- **Holds:** the current leader's maximum is held (moved from `available` to `committed`) and released when they are outbid. The hold moves in the same transaction as the bid, so it can never drift.
+- **Enforcement:** with `enforce`, a bid whose maximum is more than the available balance is refused.
+- **Winning:** at close, the hold is released and the price is charged, as one `charge` ledger row.
+
+> [!WARNING]
+> Balances are host-managed credits, settled offline. If bidders pay real money in and can take it out, that is stored value / money transmission and needs a licence. For real money use Stripe (§9).
 
 ---
 
@@ -336,6 +419,8 @@ Moderation queue, prohibited-item rules, takedowns, bans, fee settings, audit lo
 
 ### 6.4 Who sees what
 
+Every field below has an audience in `visibility` (§5.1), and the owner can override any field per bidder, either way (`see: { leader: false, reserveAmount: true }`). Every API response and live push is filtered by `functions/lib/visibility.mjs`, so a hidden field never leaves the server. The defaults:
+
 | Data | Public | Registered bidder | Own data | Host | Admin |
 |---|---|---|---|---|---|
 | Price, count, time left | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -344,6 +429,22 @@ Moderation queue, prohibited-item rules, takedowns, bans, fee settings, audit lo
 | Proxy maximum | ✗ | ✗ | ✓ | ✗ (stops shill bidding) | audit only |
 | Sealed bids | ✗ | ✗ | ✓ | after close | ✓ |
 | Winner contact | ✗ | ✗ | after win | after win | ✓ |
+
+The owner sees everything except accepted proxy maximums (unless `proxy.hostSeesMax`). Maximums of pending bids are shown, because approval needs them.
+
+### 6.5 Live chat
+
+Every auction has one chat room for the owner and bidders:
+
+- **Who:** `chat.read` and `chat.post` take the same audiences as visibility. `hostOnly` turns it into an announcement channel.
+- **Moderation:** the owner deletes any message (logged with the original text) and mutes bidders. Authors can delete their own messages. `slowModeSec` limits each bidder to one message per window, enforced in the same transaction as the message.
+- **Names:** host messages show as "Host"; bidders as alias, paddle or name (`chat.identity`). The owner always sees who wrote what.
+- **Delivery:** messages are DynamoDB rows; the Stream Lambda pushes them on `/public/auction/{id}`. A public chat goes out in full; a members-only chat goes out as a `chat_ping`, and members fetch new messages from the API.
+- **History:** messages stay with the auction and can be exported as CSV.
+
+### 6.6 History and export
+
+Everything an owner or the system does is an append-only `LOG` row: auction and item changes (with the changed settings), publishing, registrations, balance changes, bids entered, approved, rejected or cancelled, deleted chat messages, and item results. Bids, ledger rows and chat are never deleted either. The owner reads the history in the app or downloads CSVs of bids, ledger, history and chat. All of it goes when the stack is destroyed, so export first.
 
 ---
 
@@ -414,8 +515,8 @@ Check local law before launch: auctioneer licensing, marketplace sales-tax rules
 
 ## 10. Build phases
 
-1. **MVP:** auth, auction and item CRUD, image upload, English timed auctions, fixed/tiered/bidder-choice increments, proxy bids, soft close, live updates, watchlist, My Bids, closing and winner, offline payment.
-2. **More formats:** sealed, Dutch, reverse, Buy It Now, offers, staggered close, private auctions, registration approval, video/docs/3D, Web Push, templates, CSV import/export, analytics.
+1. ✅ **MVP:** auth, auction and item CRUD, image upload, English timed auctions, fixed/tiered/bidder-choice increments, proxy bids, soft close, live updates, watchlist, My Bids, closing and winner, offline payment.
+2. ✅ **More formats:** sealed, Dutch, reverse, Buy It Now, offers, staggered close, private auctions, registration approval, video/docs/3D, Web Push, templates, CSV import/export, analytics.
 3. **Money:** Stripe Connect, buyer's-premium invoices, deposits, second-chance offers, relisting.
 4. **Live auctions:** auctioneer console, clerk bids, paddle numbers, stream embed, multi-unit.
 5. **Trust:** ratings, disputes, moderation, malware scanning, shill detection, ledger export with Object Lock.
@@ -434,12 +535,23 @@ Check local law before launch: auctioneer licensing, marketplace sales-tax rules
 | Cognito user pool, web client, hosted domain, `admin`/`host` groups | `template.yaml` | ✅ built |
 | AppSync Events API, `public` + `user` namespaces, public key | `template.yaml` | ✅ built |
 | Scheduler group + role, closer target, 1-minute cron | `template.yaml` | ✅ built |
-| `GET /api/health` with `serverTime` | `functions/api` | ✅ works |
 | Upload validation: magic bytes, size caps, `incoming/` → `media/` | `functions/media` | ✅ works |
-| Bid engine, routes, JWT check, presign, scheduling | `functions/api` + rules package | ⏳ phase 1 |
-| Live publish, Web Push, snapshots, search index | `functions/stream` | ⏳ phase 1 |
-| Close, soft-close reschedule, results, invoices | `functions/closer` | ⏳ phase 1 |
-| Ending-soon alerts, cleanup | `functions/cron` | ⏳ phase 1 |
-| EXIF strip, image variants, video remux/transcode | `functions/media` + layers | ⏳ phase 1 |
-| React PWA | `web/` (placeholder page today) | ⏳ phase 1 |
-| Stripe, SES, custom domain | — | ⏳ phase 3 / as needed |
+| Rules engine: validation, increments, proxy, soft close, approval, replay | `functions/lib/rules.mjs` | ✅ built, unit-tested |
+| Visibility: per-field audiences, groups, per-bidder overrides, masks, board | `functions/lib/visibility.mjs` | ✅ built, unit-tested |
+| Cognito JWT check (`x-auth-token`) and API routes | `functions/api`, `functions/lib/auth.mjs` | ✅ built, API-tested |
+| Auctions, items, publish, registrations, bids, approval, cancel, balances, history, export | `functions/lib/auction.mjs` | ✅ built, API-tested on DynamoDB Local |
+| Live chat with moderation | `functions/lib/auction.mjs`, `functions/stream` | ✅ built, API-tested |
+| Live publish (items, results, chat, personal alerts) | `functions/stream` | ✅ built, tested with a stubbed endpoint |
+| Close, soft-close reschedule, approval deadline, results, balance charge | `functions/closer`, `functions/cron` | ✅ built, tested |
+| Sealed (first/second price), Dutch, reverse, fixed price, Buy It Now, offers | `functions/lib/rules.mjs`, `auction.mjs` | ✅ built, tested |
+| Private auctions (unlisted, access code, invites) | `functions/lib/auction.mjs`, `functions/api` | ✅ built, API-tested |
+| Watchlist, My Bids, inbox, ending-soon alerts | `functions/lib/extras.mjs`, `functions/cron` | ✅ built, API-tested |
+| Web Push (VAPID + aes128gcm, no dependencies) | `functions/lib/webpush.mjs`, `notify.mjs`, `web/sw.js` | ✅ built, crypto round-trip tested; not yet run against a real browser push service |
+| Uploads: presigned POST, auto-attach after the file check | `functions/lib/extras.mjs`, `functions/media` | ✅ built; presign tested, S3 path not run locally |
+| Templates, clone, CSV import, delete item / draft | `functions/lib/extras.mjs` | ✅ built, API-tested |
+| Invoices, payment and delivery status | `functions/lib/extras.mjs` | ✅ built, API-tested |
+| Analytics (views, bids per hour, sell-through, revenue) | `functions/lib/extras.mjs` | ✅ built, API-tested |
+| Web console (all of the above) and local dev server | `web/`, `scripts/dev-server.mjs` | ✅ built, checked in a browser locally; not yet run against AWS |
+| Snapshots to S3, client search index | — | ⏳ next |
+| Japanese, candle, multi-unit, deposits, buyer's premium, EXIF strip, transcoding | — | ⏳ later phases |
+| Stripe, SES, custom domain | — | ⏳ as needed |

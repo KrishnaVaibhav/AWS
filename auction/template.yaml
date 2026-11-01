@@ -28,6 +28,14 @@ Parameters:
       Expiry of the public AppSync Events key, in epoch seconds, at most 365
       days ahead. deploy.sh sets it to today + 360 days on every deploy.
 
+  PushContact:
+    Type: String
+    Default: mailto:admin@example.com
+    AllowedPattern: '^(mailto:[^@\s]+@[^@\s]+|https://\S+)$'
+    Description: >
+      Contact sent to browser push services with every Web Push (VAPID sub).
+      Use a real mailto: address or https URL; some services reject example.com.
+
   ApiReservedConcurrency:
     Type: Number
     Default: 0
@@ -271,14 +279,16 @@ Resources:
           - AuthType: API_KEY
           - AuthType: AMAZON_COGNITO_USER_POOLS
 
-  # /public/items/{id}, /public/live/{auctionId}: anyone, logged in or not.
+  # /public/auction/{auctionId}: item updates, results, chat (or chat pings
+  # when the chat is members-only). Anyone, logged in or not.
   PublicNamespace:
     Type: AWS::AppSync::ChannelNamespace
     Properties:
       ApiId: !GetAtt EventsApi.ApiId
       Name: public
 
-  # /user/{sub}: outbid, won, payment due. Each user hears only their own channel.
+  # /user/{sub}: outbid, won, bid approved/rejected, balance changed, and owner
+  # alerts (bid or registration waiting). Each user hears only their own channel.
   UserNamespace:
     Type: AWS::AppSync::ChannelNamespace
     Properties:
@@ -336,7 +346,8 @@ Resources:
 
   # ── Functions ───────────────────────────────────────────────────────
   # Every function logs to its own group in this stack, so a stack delete
-  # leaves no orphaned /aws/lambda/* groups behind.
+  # leaves no orphaned /aws/lambda/* groups behind. api, stream, closer and
+  # cron share functions/lib/, so they all ship the functions/ folder.
 
   ApiLogGroup:
     Type: AWS::Logs::LogGroup
@@ -349,8 +360,8 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-api'
       Description: /api/* router behind CloudFront
-      CodeUri: functions/api/
-      Handler: index.handler
+      CodeUri: functions/
+      Handler: api/index.handler
       ReservedConcurrentExecutions: !If [CapApi, !Ref ApiReservedConcurrency, !Ref AWS::NoValue]
       LoggingConfig:
         LogFormat: JSON
@@ -422,6 +433,8 @@ Resources:
         LogFormat: JSON
         LogGroup: !Ref MediaLogGroup
       Policies:
+        - DynamoDBCrudPolicy:       # attaches each accepted file to its item
+            TableName: !Ref Table
         - Statement:
             - Effect: Allow
               Action: [s3:GetObject, s3:GetObjectTagging, s3:DeleteObject]
@@ -450,16 +463,19 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-stream'
-      Description: DynamoDB Streams fan-out (live push, Web Push, snapshots)
-      CodeUri: functions/stream/
-      Handler: index.handler
+      Description: DynamoDB Streams fan-out to AppSync Events, inbox and Web Push
+      CodeUri: functions/
+      Handler: stream/index.handler
       LoggingConfig:
         LogFormat: JSON
         LogGroup: !Ref StreamLogGroup
       Environment:
         Variables:
           EVENTS_HTTP: !GetAtt EventsApi.Dns.Http
+          PUSH_CONTACT: !Ref PushContact
       Policies:
+        - DynamoDBCrudPolicy:       # reads rules; writes inbox rows, drops dead push subscriptions
+            TableName: !Ref Table
         - Statement:
             - Effect: Allow
               Action: appsync:EventPublish
@@ -485,8 +501,8 @@ Resources:
     Properties:
       FunctionName: !Sub '${AWS::StackName}-closer'
       Description: EventBridge Scheduler target, finalizes an item at closesAt
-      CodeUri: functions/closer/
-      Handler: index.handler
+      CodeUri: functions/
+      Handler: closer/index.handler
       LoggingConfig:
         LogFormat: JSON
         LogGroup: !Ref CloserLogGroup
@@ -494,6 +510,9 @@ Resources:
         Variables:
           SCHEDULE_GROUP: !Ref ScheduleGroup
           SCHEDULER_ROLE_ARN: !GetAtt SchedulerRole.Arn
+          # Its own ARN, for rescheduling itself. Built from the name: a
+          # GetAtt on itself is circular.
+          CLOSER_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-closer'
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref Table
@@ -517,14 +536,17 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-cron'
-      Description: Every minute, ending-soon alerts and cleanup
-      CodeUri: functions/cron/
-      Handler: index.handler
+      Description: Every minute, closes items a schedule missed and sends ending-soon alerts
+      CodeUri: functions/
+      Handler: cron/index.handler
       LoggingConfig:
         LogFormat: JSON
         LogGroup: !Ref CronLogGroup
+      Environment:
+        Variables:
+          PUSH_CONTACT: !Ref PushContact
       Policies:
-        - DynamoDBReadPolicy:
+        - DynamoDBCrudPolicy:
             TableName: !Ref Table
       Events:
         Sweep:

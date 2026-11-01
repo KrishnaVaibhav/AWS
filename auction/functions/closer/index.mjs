@@ -1,10 +1,11 @@
-// EventBridge Scheduler target: one at(closesAt) schedule per item, created
-// in SCHEDULE_GROUP. Phase 1 fills this in:
-// - re-read ITEM#id/STATE; if soft close moved closesAt later, create a new
-//   schedule for the new time and stop
-// - otherwise flip status open -> closed (conditional write), decide the
-//   result (winner / reserve not met / no bids), write RESULT + invoice,
-//   then notify
+// EventBridge Scheduler target: one at(closesAt) schedule per item. closeItem
+// re-reads the item: if soft close moved closesAt, or pending bids still have
+// time to be decided, it schedules itself again; otherwise it closes the item,
+// records the result and charges the winner's balance.
+import { closeItem } from '../lib/auction.mjs';
+
 export const handler = async (event) => {
-  console.log(JSON.stringify({ msg: 'close requested', event }));
+  const result = await closeItem(event.iid);
+  console.log(JSON.stringify({ msg: 'close', ...result }));
+  return result;
 };

@@ -26,6 +26,9 @@ if [ "$STAGE" = prod ]; then PROTECT=true; fi
 # today + 360 days, so the key only lapses after a year without a deploy.
 EXPIRES=$(( ( $(date +%s) / 86400 + 360 ) * 86400 ))
 
+# Optional: the Web Push contact (mailto: or https:). Unset = the template default.
+PUSH_CONTACT="${PUSH_CONTACT:-}"
+
 SAM_ARGS=(
   --template-file "$ROOT/template.yaml"
   --stack-name "$STACK"
@@ -34,7 +37,7 @@ SAM_ARGS=(
   --s3-prefix "$STACK"
   --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
   --tags app=auction "stage=$STAGE"
-  --parameter-overrides "Stage=$STAGE" "DataProtection=$PROTECT" "ApiKeyExpires=$EXPIRES"
+  --parameter-overrides "Stage=$STAGE" "DataProtection=$PROTECT" "ApiKeyExpires=$EXPIRES" ${PUSH_CONTACT:+"PushContact=$PUSH_CONTACT"}
   --no-fail-on-empty-changeset
 )
 

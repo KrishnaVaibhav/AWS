@@ -1,7 +1,7 @@
 name: 🔨 Auction App
 
 # Nothing reaches AWS unless someone runs this workflow by hand
-# (Actions → 🔨 Auction App → Run workflow). Pushes and PRs only lint.
+# (Actions → 🔨 Auction App → Run workflow). Pushes and PRs only lint and test.
 # Independent of deploy.yml: own paths, own stacks (auction-dev, auction-prod).
 # Both pipelines share the OIDC role and the `aws` environment.
 
@@ -41,6 +41,7 @@ env:
   ACTION: ${{ inputs.action || 'lint' }}
   STAGE: ${{ inputs.stage || 'dev' }}
   STACK_NAME: auction-${{ inputs.stage || 'dev' }}
+  PUSH_CONTACT: ${{ vars.AUCTION_PUSH_CONTACT }}   # optional repo variable, e.g. mailto:you@example.org
 
 # Manual runs queue per stack and are never cancelled halfway. Lint-only runs
 # (push / PR) get their own group, so they never wait behind a deploy.
@@ -55,9 +56,13 @@ defaults:
 jobs:
 
   validate:
-    name: 🔍 Validate & Lint
+    name: 🔍 Validate, Lint & Test
     if: inputs.action != 'destroy'
     runs-on: ubuntu-latest
+    services:
+      dynamodb:                # the API tests run against a local DynamoDB
+        image: amazon/dynamodb-local
+        ports: ['8000:8000']
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
@@ -88,9 +93,26 @@ jobs:
 
       - name: 🟩 Check function syntax
         run: |
-          for f in auction/functions/*/index.mjs; do
+          for f in auction/functions/*/*.mjs; do
             node --check "$f" && echo "✅ $f"
           done
+
+      - name: 🟢 Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: auction/package-lock.json
+
+      - name: 🧪 Rules + API tests (DynamoDB Local)
+        working-directory: auction
+        env:
+          DYNAMODB_ENDPOINT: http://localhost:8000
+          REQUIRE_DYNAMODB: '1'
+        run: |
+          for _ in $(seq 1 30); do curl -s -o /dev/null http://localhost:8000 && break; sleep 1; done
+          npm ci --no-audit --no-fund
+          npm test
 
       - name: 🐚 Check scripts (shellcheck)
         run: shellcheck auction/scripts/*.sh && echo "✅ scripts clean"
@@ -99,11 +121,11 @@ jobs:
         if: always()
         run: |
           {
-            echo "## 🔍 Validate & Lint"
+            echo "## 🔍 Validate, Lint & Test"
             echo ""
             echo "| Check | Status |"
             echo "|---|---|"
-            echo "| 🧹 cfn-lint · 🟩 node --check · 🐚 shellcheck | \`${{ job.status }}\` |"
+            echo "| 🧹 cfn-lint · 🟩 node --check · 🐚 shellcheck · 🧪 tests | \`${{ job.status }}\` |"
             echo ""
             echo "🏷️ Stack: \`$STACK_NAME\` · 🌍 Region: \`$AWS_REGION\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -327,7 +349,7 @@ jobs:
             echo ""
             echo "| Stage | Result |"
             echo "|---|---|"
-            echo "| 🔍 Validate & Lint | $(icon "$V") \`$V\` |"
+            echo "| 🔍 Validate, Lint & Test | $(icon "$V") \`$V\` |"
             echo "| 📋 Change Set (preview) | $(icon "$C") \`$C\` |"
             echo "| 🚀 Deploy Stack | $(icon "$D") \`$D\` |"
             echo "| 🛑 Confirm Destroy | $(icon "$K") \`$K\` |"

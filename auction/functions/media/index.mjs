@@ -1,12 +1,32 @@
-// incoming/{owner}/{id} -> check the real type from the file's first bytes ->
-// media/{owner}/{id}. Anything off the allowlist, or over its size cap, is
-// deleted. The original in incoming/ is always removed.
+// incoming/{auction}/{item}/{file} -> check the real type from the file's
+// first bytes -> media/{auction}/{item}/{file}, then attach it to the item.
+// Anything off the allowlist, or over its size cap, is deleted. The original
+// in incoming/ is always removed.
 //
 // Phase 1 adds sharp (strip EXIF/GPS, WebP + AVIF at 320/800/1600) and
 // ffmpeg (faststart remux, 720p cap, poster frame) as Lambda layers.
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 
 const s3 = new S3Client({});
+const ddb = new DynamoDBClient({});
+
+// media/{aid}/{iid}/{file}: append the key to the item's media list (max 20).
+async function attach(key) {
+  const m = /^media\/([A-Za-z0-9-]{1,64})\/([A-Za-z0-9-]{1,64})\/[\w.-]+$/.exec(key);
+  if (!m || !process.env.TABLE_NAME) return;
+  await ddb.send(new UpdateItemCommand({
+    TableName: process.env.TABLE_NAME,
+    Key: { PK: { S: `AUC#${m[1]}` }, SK: { S: `ITEM#${m[2]}` } },
+    UpdateExpression: 'SET media = list_append(if_not_exists(media, :empty), :key)',
+    ConditionExpression: 'attribute_exists(PK) AND (attribute_not_exists(media) OR size(media) < :max)',
+    ExpressionAttributeValues: { ':empty': { L: [] }, ':key': { L: [{ S: key }] }, ':max': { N: '20' } },
+  })).catch((err) => {
+    if (err.name !== 'ConditionalCheckFailedException') throw err;
+    console.warn(JSON.stringify({ msg: 'not attached (item gone or full)', key }));
+  });
+}
+
 const MB = 1024 * 1024;
 
 const ascii = (b, start, end) => b.toString('latin1', start, end);
@@ -56,6 +76,7 @@ export const handler = async (event) => {
         // Documents and 3D files download instead of rendering on our domain.
         ContentDisposition: inline ? undefined : 'attachment',
       }));
+      await attach(target);
       console.log(JSON.stringify({ msg: 'accepted', key: target, size, type: contentType }));
     }
 
